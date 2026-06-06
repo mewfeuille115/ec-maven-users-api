@@ -33,10 +33,10 @@ jobs:
         run: echo "IMAGE_NAME=${{ secrets.ACR_LOGIN_SERVER }}/$(basename ${{ github.repository }})" >> "$GITHUB_ENV"
 
       - name: Build and Push Docker Image
-          uses: docker/build-push-action@v5
-          with:
-            context: .                          # 👈 esto es lo que falta
-        push: ${{ github.event_name != 'pull_request' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .                          # 👈 esto es lo que falta
+          push: ${{ github.event_name != 'pull_request' }}
             tags: |
               ${{ env.IMAGE_NAME }}:latest
               ${{ env.IMAGE_NAME }}:${{ github.sha }}

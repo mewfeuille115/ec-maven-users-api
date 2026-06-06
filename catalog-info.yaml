@@ -1,0 +1,18 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ec-maven-users-api
+  description: Descripción de mi microservicio
+  tags:
+    - java
+    - api
+  links:
+    - url: https://github.com/aldo2510/ec-maven-users-api
+      title: GitHub
+  annotations:
+    github.com/project-slug: aldo2510/ec-maven-users-api
+spec:
+  type: service
+  lifecycle: production
+  owner: equipo-backend
+  system: mi-sistema

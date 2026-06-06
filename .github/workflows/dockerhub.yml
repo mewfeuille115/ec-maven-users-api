@@ -25,3 +25,13 @@ jobs:
 
       - name: Login to DockerHub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Set Image Name
+        id: vars
+        run: echo "IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/$(basename ${{ github.repository }})" > "$GITHUB_ENV"
+
+      - name: Build The Docker Image
+        run: docker build -t $IMAGE_NAME:latest .
+
+      - name: Push The Docker Image
+        run: docker push $IMAGE_NAME:latest

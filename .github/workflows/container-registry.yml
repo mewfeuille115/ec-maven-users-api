@@ -37,6 +37,6 @@ jobs:
         with:
           context: .                          # 👈 esto es lo que falta
           push: ${{ github.event_name != 'pull_request' }}
-            tags: |
-              ${{ env.IMAGE_NAME }}:latest
-              ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}

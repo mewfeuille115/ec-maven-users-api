@@ -10,7 +10,7 @@ jobs:
   pipeline:
     uses: mewfeuille115/org-templates/.github/workflows/acr-staged-build-push.yaml@main
     with:
-      image-name: mi-aplicacion-java
+      image-name: ec-maven-users-api
       image-tag: latest
       dockerfile-path: Dockerfile
     secrets:

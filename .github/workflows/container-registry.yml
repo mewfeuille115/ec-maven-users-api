@@ -1,14 +1,14 @@
-name: workflow acr from org-templates
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+# name: workflow acr from org-templates
+# on:
+#   push:
+#     branches: ["main"]
+#   pull_request:
+#     branches: ["main"]
 
-jobs:
-  build:
-    uses: mewfeuille115/org-templates/.github/workflows/acr-build-push.yaml@main
-    with:
-      java-version: '17'
-      java-distribution: 'temurin'
-    secrets: inherit
+# jobs:
+#   build:
+#     uses: mewfeuille115/org-templates/.github/workflows/acr-simple-build-push.yaml@main
+#     with:
+#       java-version: '17'
+#       java-distribution: 'temurin'
+#     secrets: inherit

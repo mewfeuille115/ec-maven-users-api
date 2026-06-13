@@ -1,112 +1,19 @@
 name: CI/CD → Azure Container Instances
-
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
-env:
-  IMAGE_NAME:      mi-aplicacion-java
-  IMAGE_TAG:       latest
-  DOCKERFILE_PATH: Dockerfile
-  ACR_REGISTRY:    cregatceastus01.azurecr.io
-
 jobs:
-  # ─────────────────────────────────────────────
-  # Job 1: Compilar con Maven
-  # ─────────────────────────────────────────────
-  build-maven:
-    name: Compilar con Maven
-    runs-on: ubuntu-latest
-    container:
-      image: maven:3.8.4-openjdk-17-slim
-
-    steps:
-      - name: Checkout código fuente
-        uses: actions/checkout@v4
-
-      - name: Compilar con Maven (sin tests)
-        run: mvn -B -DskipTests clean package
-
-      - name: Subir artefacto JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-jar
-          path: target/*.jar
-          if-no-files-found: error
-          retention-days: 1
-
-  # ─────────────────────────────────────────────
-  # Job 2: Build de la imagen Docker
-  # ─────────────────────────────────────────────
-  build-image:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: build-maven
-
-    steps:
-      - name: Checkout código fuente
-        uses: actions/checkout@v4
-
-      - name: Descargar artefacto JAR
-        uses: actions/download-artifact@v4
-        with:
-          name: app-jar
-          path: target/
-
-      - name: Build de la imagen Docker
-        run: |
-          docker build \
-            -t ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-            -f ${{ env.DOCKERFILE_PATH }} .
-
-      # Guardamos la imagen como tar para pasarla al siguiente job
-      - name: Exportar imagen Docker
-        run: |
-          docker save \
-            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-            -o image.tar
-
-      - name: Subir imagen como artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-image
-          path: image.tar
-          retention-days: 1
-
-  # ─────────────────────────────────────────────
-  # Job 3: Publicar imagen en ACR
-  # ─────────────────────────────────────────────
-  publish-image:
-    name: Publish Image → ACR
-    runs-on: ubuntu-latest
-    needs: build-image
-
-    steps:
-      - name: Descargar imagen Docker
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-
-      - name: Cargar imagen en Docker
-        run: docker load -i image.tar
-
-      - name: Login en Azure Container Registry
-        run: |
-          docker login ${{ env.ACR_REGISTRY }} \
-            -u ${{ secrets.DOCKER_CREDS_USR }} \
-            -p ${{ secrets.DOCKER_CREDS_PSW }}
-
-      - name: Tag y Push al ACR
-        run: |
-          set -eux
-          docker tag \
-            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
-
-          docker push ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
-
-      - name: Logout del registry
-        run: docker logout ${{ env.ACR_REGISTRY }}
+  pipeline:
+    uses: mewfeuille115/org-templates/.github/workflows/acr-staged-build-push.yaml@main
+    with:
+      image-name: mi-aplicacion-java
+      image-tag: latest
+      dockerfile-path: Dockerfile
+    secrets:
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}

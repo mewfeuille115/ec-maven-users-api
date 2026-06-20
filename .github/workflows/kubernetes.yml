@@ -1,0 +1,181 @@
+name: CI/CD → Azure Kubernetes Service (AKS)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME:      mi-aplicacion-java
+  IMAGE_TAG:       latest
+  DOCKERFILE_PATH: Dockerfile
+  ACR_REGISTRY:    cregatceastus01.azurecr.io
+  APP_NAME:        myapp
+  RESOURCE_GROUP:  mod3lab2
+  CLUSTER_NAME:    aks-lab
+  CONTAINER_PORT:  "8080"
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Compilar con Maven
+  # ─────────────────────────────────────────────
+  build-maven:
+    name: Compilar con Maven
+    runs-on: ubuntu-latest
+    container:
+      image: maven:3.8.4-openjdk-17-slim
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Compilar con Maven (sin tests)
+        run: mvn -B -DskipTests clean package
+
+      - name: Subir artefacto JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─────────────────────────────────────────────
+  # Job 2: Build de la imagen Docker
+  # ─────────────────────────────────────────────
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: build-maven
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Descargar artefacto JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Build de la imagen Docker
+        run: |
+          docker build \
+            -t ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -f ${{ env.DOCKERFILE_PATH }} .
+
+      - name: Exportar imagen Docker
+        run: |
+          docker save \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -o image.tar
+
+      - name: Subir imagen como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # ─────────────────────────────────────────────
+  # Job 3: Publicar imagen en ACR
+  # ─────────────────────────────────────────────
+  publish-image:
+    name: Publish Image → ACR
+    runs-on: ubuntu-latest
+    needs: build-image
+
+    steps:
+      - name: Descargar imagen Docker
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Cargar imagen en Docker
+        run: docker load -i image.tar
+
+      - name: Login en Azure Container Registry
+        run: |
+          docker login ${{ env.ACR_REGISTRY }} \
+            -u ${{ secrets.AZ_CLIENT_ID }} \
+            -p ${{ secrets.AZ_CLIENT_SECRET }}
+
+      - name: Tag y Push al ACR
+        run: |
+          set -eux
+          docker tag \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+          docker push ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+      - name: Logout del registry
+        run: docker logout ${{ env.ACR_REGISTRY }}
+
+  # ─────────────────────────────────────────────
+  # Job 4: Deploy a Azure Kubernetes Service (AKS)
+  # ─────────────────────────────────────────────
+  deploy-aks:
+    name: Deploy → AKS Clúster
+    runs-on: ubuntu-latest
+    needs: publish-image
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Azure Login con Service Principal
+        run: |
+          az login --service-principal \
+            --username="${{ secrets.AZ_CLIENT_ID }}" \
+            --password="${{ secrets.AZ_CLIENT_SECRET }}" \
+            --tenant="${{ secrets.AZ_TENANT_ID }}"
+          az account set --subscription "${{ secrets.AZ_SUBSCRIPTION_ID }}"
+
+      - name: Obtener credenciales del AKS (Kubeconfig)
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ env.CLUSTER_NAME }}" \
+            --overwrite-existing
+
+      - name: Reemplazar TAG de imagen en el Manifiesto
+        run: |
+          sed -i "s|__IMAGE_REF__|${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}|g" k8s/manifest.yaml
+
+      - name: Desplegar en Kubernetes
+        run: |
+          kubectl apply -f k8s/manifest.yaml
+
+      - name: Validar estado del despliegue
+        run: |
+          echo "⌛ Esperando que el Deployment esté completamente disponible..."
+          kubectl rollout status deployment/${{ env.APP_NAME }} --timeout=90s
+          
+          echo "✅ Recursos actuales en el clúster:"
+          kubectl get deployments,pods,services -l app=${{ env.APP_NAME }}
+
+      - name: Azure Logout
+        if: always()
+        run: az logout
+
+
+# # 1. Crear el clúster AKS en el RG existente
+# az aks create \
+#   --resource-group mod3lab2 \
+#   --name aks-lab \
+#   --node-count 1 \
+#   --node-vm-size Standard_D2s_v3 \
+#   --enable-managed-identity \
+#   --generate-ssh-keys \
+#   --kubernetes-version 1.34.8 \
+#   --network-plugin kubenet
+
+# # 2. Vincular el AKS con el ACR para que pueda descargar las imágenes
+# az aks update \
+#   --resource-group mod3lab2 \
+#   --name aks-lab \
+#   --attach-acr cregatceastus01

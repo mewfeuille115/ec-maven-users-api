@@ -1,0 +1,209 @@
+name: CI/CD → Azure Container Instances
+
+on:
+#  push:
+#    branches: [ main ]
+#  pull_request:
+#    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME:      mi-aplicacion-java
+  IMAGE_TAG:       latest
+  DOCKERFILE_PATH: Dockerfile
+  ACR_REGISTRY:    cregatceastus01.azurecr.io
+  APP_NAME:        myapp
+  ACI_NAME:        aci-myapp
+  RESOURCE_GROUP:  mod3lab2
+  LOCATION:        eastus
+  CONTAINER_PORT:  "8080"
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Compilar con Maven
+  # ─────────────────────────────────────────────
+  build-maven:
+    name: Compilar con Maven
+    runs-on: ubuntu-latest
+    container:
+      image: maven:3.8.4-openjdk-17-slim
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Compilar con Maven (sin tests)
+        run: mvn -B -DskipTests clean package
+
+      - name: Subir artefacto JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─────────────────────────────────────────────
+  # Job 2: Build de la imagen Docker
+  # ─────────────────────────────────────────────
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: build-maven
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Descargar artefacto JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Build de la imagen Docker
+        run: |
+          docker build \
+            -t ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -f ${{ env.DOCKERFILE_PATH }} .
+
+      # Guardamos la imagen como tar para pasarla al siguiente job
+      - name: Exportar imagen Docker
+        run: |
+          docker save \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -o image.tar
+
+      - name: Subir imagen como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # ─────────────────────────────────────────────
+  # Job 3: Publicar imagen en ACR
+  # ─────────────────────────────────────────────
+  publish-image:
+    name: Publish Image → ACR
+    runs-on: ubuntu-latest
+    needs: build-image
+
+    steps:
+      - name: Descargar imagen Docker
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Cargar imagen en Docker
+        run: docker load -i image.tar
+
+      - name: Login en Azure Container Registry
+        run: |
+          docker login ${{ env.ACR_REGISTRY }} \
+            -u ${{ secrets.AZ_CLIENT_ID }} \
+            -p ${{ secrets.AZ_CLIENT_SECRET }}
+
+      - name: Tag y Push al ACR
+        run: |
+          set -eux
+          docker tag \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+          docker push ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+      - name: Logout del registry
+        run: docker logout ${{ env.ACR_REGISTRY }}
+
+  # ─────────────────────────────────────────────
+  # Job 4: Deploy a Azure Container Instances
+  # Solo en rama main
+  # ─────────────────────────────────────────────
+  deploy-aci:
+    name: Deploy → Azure Container Instances
+    runs-on: ubuntu-latest
+    needs: publish-image
+    if: github.ref == 'refs/heads/main'
+    container:
+      image: mcr.microsoft.com/azure-cli
+
+    env:
+      IMAGE_REF: ${{ vars.ACR_REGISTRY || 'laboratorio.azurecr.io' }}/mi-aplicacion-java:${{ github.run_number }}
+
+    steps:
+      - name: Azure Login con Service Principal
+        run: |
+          az login --service-principal \
+            --username="${{ secrets.AZ_CLIENT_ID }}" \
+            --password="${{ secrets.AZ_CLIENT_SECRET }}" \
+            --tenant="${{ secrets.AZ_TENANT_ID }}"
+          az account set --subscription "${{ secrets.AZ_SUBSCRIPTION_ID }}"
+
+      - name: Crear Resource Group (idempotente)
+        run: |
+          az group create \
+            -n "${{ env.RESOURCE_GROUP }}" \
+            -l "${{ env.LOCATION }}"
+
+      - name: Eliminar ACI existente si existe
+        run: |
+          if az container show \
+               -g "${{ env.RESOURCE_GROUP }}" \
+               -n "${{ env.ACI_NAME }}" \
+               >/dev/null 2>&1; then
+            az container delete \
+              -g "${{ env.RESOURCE_GROUP }}" \
+              -n "${{ env.ACI_NAME }}" -y
+          fi
+
+      - name: Deploy a Azure Container Instances
+        run: |
+          DNS_LABEL=$(echo "aci-${{ env.APP_NAME }}-${{ github.run_number }}" \
+            | tr '[:upper:]' '[:lower:]')
+
+          az container create \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name            "${{ env.ACI_NAME }}" \
+            --image           "${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}" \
+            --registry-login-server "${{ env.ACR_REGISTRY }}" \
+            --registry-username     "${{ secrets.AZ_CLIENT_ID }}" \
+            --registry-password     "${{ secrets.AZ_CLIENT_SECRET }}" \
+            --cpu 1 --memory 1.5 \
+            --restart-policy Always \
+            --ip-address Public \
+            --ports          "${{ env.CONTAINER_PORT }}" \
+            --dns-name-label "$DNS_LABEL" \
+            --os-type        Linux
+
+      - name: Mostrar URL del contenedor
+        run: |
+          FQDN=$(az container show \
+            -g "${{ env.RESOURCE_GROUP }}" \
+            -n "${{ env.ACI_NAME }}" \
+            --query "ipAddress.fqdn" -o tsv)
+          echo "✅ ACI URL: http://${FQDN}:${{ env.CONTAINER_PORT }}"
+          echo "ACI_URL=http://${FQDN}:${{ env.CONTAINER_PORT }}" >> $GITHUB_ENV
+
+      - name: Azure Logout
+        if: always()
+        run: az logout
+
+
+###############
+
+# az ad sp create-for-rbac \
+#   --name "sp-github-actions-aci" \
+#   --role Contributor \
+#   --scopes /subscriptions/<TU_SUBSCRIPTION_ID>
+
+
+
+# az provider register --namespace Microsoft.ContainerInstance
+
+
+
+# az role assignment create \
+#   --assignee "<VALOR_DEL_APP_ID>" \
+#   --role AcrPush \
+#   --scope /subscriptions/<TU_SUBSCRIPTION_ID>/resourceGroups/<RG_DONDE_ESTA_EL_ACR>/providers/Microsoft.ContainerRegistry/registries/cregatceastus01

@@ -8,12 +8,12 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME:      mi-aplicacion-java
+  IMAGE_NAME:      ec-maven-users-api
   IMAGE_TAG:       latest
   DOCKERFILE_PATH: Dockerfile
-  ACR_REGISTRY:    cregatceastus01.azurecr.io
+  ACR_REGISTRY:    creglcrpestus01.azurecr.io
   APP_NAME:        myapp
-  RESOURCE_GROUP:  mod3lab2
+  RESOURCE_GROUP:  rg-lcrp-eastus-01
   CLUSTER_NAME:    aks-lab
   CONTAINER_PORT:  "8080"
 
@@ -164,18 +164,18 @@ jobs:
 
 
 # # 1. Crear el clúster AKS en el RG existente
-# az aks create \
-#   --resource-group mod3lab2 \
-#   --name aks-lab \
-#   --node-count 1 \
-#   --node-vm-size Standard_D2s_v3 \
-#   --enable-managed-identity \
-#   --generate-ssh-keys \
-#   --kubernetes-version 1.34.8 \
+# az aks create `
+#   --resource-group rg-lcrp-eastus-01 `
+#   --name aks-lab `
+#   --node-count 1 `
+#   --node-vm-size Standard_D2s_v3 `
+#   --enable-managed-identity `
+#   --generate-ssh-keys `
+#   --kubernetes-version 1.34.8 `
 #   --network-plugin kubenet
 
 # # 2. Vincular el AKS con el ACR para que pueda descargar las imágenes
-# az aks update \
-#   --resource-group mod3lab2 \
-#   --name aks-lab \
-#   --attach-acr cregatceastus01
+# az aks update `
+#   --resource-group rg-lcrp-eastus-01 `
+#   --name aks-lab `
+#   --attach-acr creglcrpestus01

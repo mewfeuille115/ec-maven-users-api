@@ -1,20 +1,20 @@
 name: CI/CD → Azure Container Instances
 
 on:
-#  push:
-#    branches: [ main ]
-#  pull_request:
-#    branches: [ main ]
+ push:
+   branches: [ main ]
+ pull_request:
+   branches: [ main ]
   workflow_dispatch:
 
 env:
-  IMAGE_NAME:      mi-aplicacion-java
+  IMAGE_NAME:      ec-maven-users-api
   IMAGE_TAG:       latest
   DOCKERFILE_PATH: Dockerfile
-  ACR_REGISTRY:    cregatceastus01.azurecr.io
+  ACR_REGISTRY:    creglcrpestus01.azurecr.io
   APP_NAME:        myapp
   ACI_NAME:        aci-myapp
-  RESOURCE_GROUP:  mod3lab2
+  RESOURCE_GROUP:  rg-lcrp-eastus-01
   LOCATION:        eastus
   CONTAINER_PORT:  "8080"
 
@@ -101,8 +101,8 @@ jobs:
       - name: Login en Azure Container Registry
         run: |
           docker login ${{ env.ACR_REGISTRY }} \
-            -u ${{ secrets.AZ_CLIENT_ID }} \
-            -p ${{ secrets.AZ_CLIENT_SECRET }}
+            -u ${{ secrets.AZURE_CLIENT_ID }} \
+            -p ${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Tag y Push al ACR
         run: |
@@ -135,10 +135,10 @@ jobs:
       - name: Azure Login con Service Principal
         run: |
           az login --service-principal \
-            --username="${{ secrets.AZ_CLIENT_ID }}" \
-            --password="${{ secrets.AZ_CLIENT_SECRET }}" \
-            --tenant="${{ secrets.AZ_TENANT_ID }}"
-          az account set --subscription "${{ secrets.AZ_SUBSCRIPTION_ID }}"
+            --username="${{ secrets.AZURE_CLIENT_ID }}" \
+            --password="${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant="${{ secrets.AZURE_TENANT_ID }}"
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
 
       - name: Crear Resource Group (idempotente)
         run: |
@@ -167,8 +167,8 @@ jobs:
             --name            "${{ env.ACI_NAME }}" \
             --image           "${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}" \
             --registry-login-server "${{ env.ACR_REGISTRY }}" \
-            --registry-username     "${{ secrets.AZ_CLIENT_ID }}" \
-            --registry-password     "${{ secrets.AZ_CLIENT_SECRET }}" \
+            --registry-username     "${{ secrets.AZURE_CLIENT_ID }}" \
+            --registry-password     "${{ secrets.AZURE_CLIENT_SECRET }}" \
             --cpu 1 --memory 1.5 \
             --restart-policy Always \
             --ip-address Public \

@@ -1,0 +1,42 @@
+name: workflow sast
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-sast:
+    runs-on: ubuntu-latest
+    # Permisos necesarios para que CodeQL suba los resultados (SARIF) a GitHub
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+      
+      - name: Setup Java JDK
+        uses: actions/setup-java@v5.2.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # 1. Inicializar CodeQL antes de compilar
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java
+
+      # 2. Tu compilación habitual (CodeQL "escucha" este proceso)
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      # 3. Analizar y subir los resultados
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java"

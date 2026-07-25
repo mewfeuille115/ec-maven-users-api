@@ -1,4 +1,4 @@
-name: workflow dockerhub
+name: workflow sast
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
 
       # 1. Inicializar CodeQL antes de compilar
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: java
 
@@ -37,6 +37,16 @@ jobs:
 
       # 3. Analizar y subir los resultados
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:java"
+
+      - name: Check for vulnerabilities and fail Job
+        run: |
+          # Busca en el archivo SARIF si existe la palabra "error" (vulnerabilidades críticas)
+          if grep -q '"level": "error"' ../results/*.sarif; then
+            echo "❌ Vulnerabilidades críticas encontradas. Rompiendo el pipeline."
+            exit 1
+          else
+            echo "✅ Código seguro. Pasando a la siguiente fase."
+          fi

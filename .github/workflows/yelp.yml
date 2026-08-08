@@ -1,0 +1,116 @@
+name: Detect Secrets (Yelp)
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+permissions:
+  contents: read
+
+jobs:
+  detect-secrets:
+    runs-on: ubuntu-latest
+
+    env:
+      DETECT_SECRETS_EXCLUDES: '(\/\.git\/|\/node_modules\/|\/target\/|\/build\/|\/dist\/|\/coverage\/|\/\.secrets\.(baseline|json|diff|new)$)'
+      ARTIFACTS_DIR: detect-secrets-artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install detect-secrets
+        run: |
+          set -euxo pipefail
+          python -V
+          pip install --upgrade pip
+          pip install "detect-secrets==1.5.0"
+          detect-secrets --version || true
+
+      - name: Run detect-secrets scan
+        run: |
+          set -euxo pipefail
+          mkdir -p "${ARTIFACTS_DIR}"
+
+          if [ -f ".secrets.baseline" ]; then
+            echo "Using existing baseline (.secrets.baseline)"
+            detect-secrets scan \
+              --all-files \
+              --exclude-files "${DETECT_SECRETS_EXCLUDES}" \
+              --baseline .secrets.baseline \
+              > .secrets.json
+            # Guarda también el baseline en los artefactos por conveniencia
+            cp -f .secrets.baseline "${ARTIFACTS_DIR}/.secrets.baseline"
+          else
+            echo "No baseline present; scanning entire repo"
+            detect-secrets scan \
+              --all-files \
+              --exclude-files "${DETECT_SECRETS_EXCLUDES}" \
+              > .secrets.json
+          fi
+
+          # ----- Resumen con jq -----
+          count=$(jq '[.results[] | length] | add // 0' .secrets.json)
+          echo "Possible secrets found: ${count}"
+
+          echo "Findings by type:"
+          jq -r '
+            .results
+            | to_entries[]
+            | .value[]
+            | .type
+          ' .secrets.json | sort | uniq -c | sed 's/^/  - /' || true
+
+          echo "Files with findings:"
+          jq -r '
+            .results
+            | to_entries[]
+            | "[\(.value|length)] \(.key)"
+          ' .secrets.json || true
+
+          # Copiar SIEMPRE el reporte a la carpeta de artefactos
+          cp -f .secrets.json "${ARTIFACTS_DIR}/secrets-report.json"
+
+          # Añadir resumen al Job Summary
+          {
+            echo "### Detect Secrets summary"
+            echo ""
+            echo "**Possible secrets found:** ${count}"
+            echo ""
+            echo "**Files with findings:**"
+            jq -r '
+              .results
+              | to_entries[]
+              | "- [\(.value|length)] \(.key)"
+            ' .secrets.json || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Fallar el job si hubo hallazgos
+          if [ "${count}" -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detect-secrets-report
+          path: ${{ github.workspace }}/detect-secrets-artifacts
+          if-no-files-found: error
+
+      # (Opcional) Paso de depuración por si volviera a fallar el upload
+      - name: Debug workspace
+        if: failure()
+        run: |
+          set -x
+          pwd
+          ls -la
+          ls -la "${ARTIFACTS_DIR}" || true

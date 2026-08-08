@@ -1,0 +1,138 @@
+name: Build & Trivy Scan 2
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+env:
+  APP_NAME: mi-aplicacion-java
+  IMAGE_TAG: latest
+  IMAGE_NAME: mi-aplicacion-java:latest
+
+jobs:
+  build-trivy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java & Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build with Maven (no tests)
+        run: |
+          set -eux
+          mvn -v
+          mvn clean package -DskipTests
+
+      - name: Build Docker image (local only)
+        run: |
+          set -eux
+          # Fallback por si IMAGE_NAME llegara vacío
+          : "${IMAGE_NAME:=mi-aplicacion-java:latest}"
+
+          docker --version
+          echo "Building $IMAGE_NAME"
+          docker build -t "$IMAGE_NAME" .
+
+          echo "==> Local images (debug)"
+          docker image ls --no-trunc | head -n 20
+
+          echo "==> Verificando que la imagen exista"
+          docker image inspect "$IMAGE_NAME" >/dev/null
+
+      # ---- TRIVY SCAN (tabla) ----
+      - name: Trivy scan (table)
+        continue-on-error: true
+        run: |
+          set -eux
+          : "${IMAGE_NAME:=mi-aplicacion-java:latest}"
+          echo "==> Trivy (HIGH/CRITICAL in console) on $IMAGE_NAME"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+              --scanners vuln \
+              --no-progress \
+              --format table \
+              --severity HIGH,CRITICAL \
+              "$IMAGE_NAME" || true
+
+      # ---- TRIVY SCAN (JSON + resumen) ----
+      - name: Trivy scan (JSON)
+        continue-on-error: true
+        run: |
+          set -eux
+          : "${IMAGE_NAME:=mi-aplicacion-java:latest}"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD":/workspace \
+            aquasec/trivy:latest image \
+              --scanners vuln \
+              --no-progress \
+              --format json \
+              -o /workspace/trivy-image.json \
+              --severity CRITICAL,HIGH,MEDIUM,LOW \
+              "$IMAGE_NAME" || true
+          test -s trivy-image.json && ls -l trivy-image.json || true
+
+      - name: Build Markdown summary
+        run: |
+          set -eux
+          # Asegura jq (por si la imagen del runner cambia)
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
+      
+          if [ -f trivy-image.json ]; then
+            echo "### Trivy summary for \`$IMAGE_NAME\`" > trivy-summary.md
+            echo "" >> trivy-summary.md
+      
+            # Totales y top 10 (sin heredoc; comillas escapadas)
+            jq -r '
+              def vulns: [.Results[].Vulnerabilities[]?];
+              def order: {"CRITICAL":4,"HIGH":3,"MEDIUM":2,"LOW":1};
+              def c(sev): (vulns | map(select(.Severity==sev)) | length);
+      
+              "Total findings: \((vulns|length))",
+              "CRITICAL: \(c(\"CRITICAL\"))  |  HIGH: \(c(\"HIGH\"))  |  MEDIUM: \(c(\"MEDIUM\"))  |  LOW: \(c(\"LOW\"))",
+              "",
+              "#### Top findings (max 10)",
+              "| Severity | ID | Package | Installed | Fixed | Resource |",
+              "|---|---|---|---|---|---|",
+              (vulns
+                | sort_by( (order[.Severity] // 0), .VulnerabilityID ) | reverse
+                | .[:10]
+                | map("| \(.Severity) | \(.VulnerabilityID) | `\(.PkgName)` | \(.InstalledVersion // \"-\") | \(.FixedVersion // \"-\") | \(.Target // \"-\") |")
+                | .[]
+              )
+            ' trivy-image.json >> trivy-summary.md || true
+      
+            echo "" >> trivy-summary.md
+            echo "_El reporte completo se guarda como artefacto._" >> trivy-summary.md
+            # Publica el resumen en el panel del job
+            cat trivy-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó trivy-image.json, omitiendo resumen."
+          fi
+
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: |
+            trivy-image.json
+            trivy-summary.md
+          if-no-files-found: warn

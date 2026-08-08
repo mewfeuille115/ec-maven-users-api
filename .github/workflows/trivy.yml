@@ -98,9 +98,9 @@ jobs:
             echo "### Trivy summary for \`$IMAGE_NAME\`" > trivy-summary.md
             echo "" >> trivy-summary.md
 
-            # Totales y top 10 (sin heredoc; comillas corregidas y espacios saneados)
+            # El cambio clave está aquí: .Results[]? previene el crash si no hay resultados
             jq -r '
-              def vulns: [.Results[].Vulnerabilities[]?];
+              def vulns: [ .Results[]? | .Vulnerabilities[]? ];
               def order: {"CRITICAL":4,"HIGH":3,"MEDIUM":2,"LOW":1};
               def c(sev): (vulns | map(select(.Severity==sev)) | length);
 
@@ -116,7 +116,7 @@ jobs:
                 | map("| \(.Severity) | \(.VulnerabilityID) | `\(.PkgName)` | \(.InstalledVersion // "-") | \(.FixedVersion // "-") | \(.Target // "-") |")
                 | .[]
               )
-            ' trivy-image.json >> trivy-summary.md || true
+            ' trivy-image.json >> trivy-summary.md || echo "⚠️ Ocurrió un error interno al procesar el JSON con jq"
 
             echo "" >> trivy-summary.md
             echo "_El reporte completo se guarda como artefacto._" >> trivy-summary.md

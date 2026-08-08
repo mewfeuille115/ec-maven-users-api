@@ -53,37 +53,24 @@ jobs:
 
       # ---- TRIVY SCAN (tabla) ----
       - name: Trivy scan (table)
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
-        run: |
-          set -eux
-          : "${IMAGE_NAME:=mi-aplicacion-java:latest}"
-          echo "==> Trivy (HIGH/CRITICAL in console) on $IMAGE_NAME"
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-              --scanners vuln \
-              --no-progress \
-              --format table \
-              --severity HIGH,CRITICAL \
-              "$IMAGE_NAME" || true
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
 
-      # ---- TRIVY SCAN (JSON + resumen) ----
+      # ---- TRIVY SCAN (JSON) ----
       - name: Trivy scan (JSON)
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
-        run: |
-          set -eux
-          : "${IMAGE_NAME:=mi-aplicacion-java:latest}"
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD":/workspace \
-            aquasec/trivy:latest image \
-              --scanners vuln \
-              --no-progress \
-              --format json \
-              -o /workspace/trivy-image.json \
-              --severity CRITICAL,HIGH,MEDIUM,LOW \
-              "$IMAGE_NAME" || true
-          test -s trivy-image.json && ls -l trivy-image.json || true
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          scanners: vuln
+          format: json
+          output: trivy-image.json
+          severity: CRITICAL,HIGH,MEDIUM,LOW
 
       - name: Build Markdown summary
         run: |
